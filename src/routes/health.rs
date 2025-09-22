@@ -1,0 +1,38 @@
+use axum::{
+    Router,
+    response::{IntoResponse, Json, Redirect, Response},
+    routing::get,
+};
+use serde_json::{Value, json};
+use std::env;
+
+pub fn register() -> Router {
+    Router::new()
+        .route("/health", get(health_check))
+        .route("/", get(root_redirect))
+}
+
+async fn health_check() -> Json<Value> {
+    Json(json!({
+        "status": "ok",
+        "timestamp": chrono::Utc::now().timestamp(),
+        "service": "equicloud"
+    }))
+}
+
+async fn root_redirect() -> Response {
+    if let Ok(redirect_url) = env::var("API_ROOT_REDIRECT_URL") {
+        if !redirect_url.is_empty() {
+            return Redirect::temporary(&redirect_url).into_response();
+        }
+    }
+
+    Json(json!({
+        "message": "EquiCloud",
+        "version": "1.0.0",
+        "endpoints": [
+            "/health"
+        ]
+    }))
+    .into_response()
+}

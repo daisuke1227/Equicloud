@@ -1,0 +1,31 @@
+services:
+  scylla:
+    image: scylladb/scylla:5.4
+    container_name: scylla-node
+    restart: unless-stopped
+    ports:
+      - "9042:9042"
+    volumes:
+      - scylla_data:/var/lib/scylla
+    command: [
+      "--smp=2", 
+      "--memory=4G",
+      "--authenticator=PasswordAuthenticator",
+      "--authorizer=CassandraAuthorizer"
+    ]
+    environment:
+      - SCYLLA_ARGS=--log-to-stdout=1
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - scylla_net
+
+volumes:
+  scylla_data:
+
+networks:
+  scylla_net:
+    driver: bridge
