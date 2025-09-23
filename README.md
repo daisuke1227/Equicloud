@@ -4,16 +4,24 @@ EquiCloud is a Rust-based version of vencloud using ScyllaDB
 
 ## Requirements
 
-### Native Installation
+<details>
+<summary>Native Installation</summary>
+
 - **Rust**: https://www.rust-lang.org/tools/install
 - **ScyllaDB**: 5.4+ or 2025.3.1+ (recommended)
 - **System Dependencies**:
   - `pkg-config`
   - `libssl-dev` (Ubuntu/Debian) or `openssl-devel` (RHEL/CentOS)
 
-### Docker Installation
+</details>
+
+<details>
+<summary>Docker Installation</summary>
+
 - **Docker**: https://docs.docker.com/engine/install
 - **Docker Compose**: https://docs.docker.com/compose/install
+
+</details>
 
 ## Quick Start (Docker - Recommended)
 
@@ -38,19 +46,26 @@ The API will be available at `http://{SERVER_HOST}:{SERVER_PORT}` (default: `htt
 
 ## Native Installation
 
-### 1. Install ScyllaDB
+### 1. Clone and Setup
+
+```bash
+git clone https://github.com/Equicord/Equicloud.git
+cd Equicloud
+```
+
+### 2. Install ScyllaDB
 
 ```bash
 docker run --name scylla -p 9042:9042 -d scylladb/scylla:5.4
 ```
 
-### 2. Configure Environment
+### 3. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-### 3. Run the Application
+### 4. Run the Application
 
 ```bash
 cargo run
@@ -58,26 +73,6 @@ cargo run
 # Or build for production
 cargo build --release
 ./target/release/equicloud
-```
-
-## Configuration
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure the following:
-
-#### Server Configuration
-```env
-SERVER_PORT=9000                    # Port to bind the server to
-SERVER_HOST=0.0.0.0                # Host interface to bind to
-SERVER_FQDN=http://localhost:9000   # Full URL for OAuth redirects
-```
-
-#### ScyllaDB Configuration
-```env
-SCYLLA_URI=localhost:9042           # ScyllaDB connection string
-SCYLLA_USERNAME=                    # Username (optional)
-SCYLLA_PASSWORD=                    # Password (optional)
 ```
 
 #### Discord OAuth Setup
@@ -99,12 +94,6 @@ API_ROOT_REDIRECT_URL=              # URL to redirect root requests to
 MAX_BACKUP_SIZE_BYTES=62914560      # Max upload size (60MB default)
 DISCORD_ALLOWED_USER_IDS=           # Comma-separated whitelist of Discord user IDs
 ```
-
-### Docker Compose Services
-
-- **equicloud**: Main application server
-- **scylla**: ScyllaDB database with persistent storage
-
 ### Reverse Proxy Example (nginx)
 
 ```nginx
