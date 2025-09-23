@@ -1,6 +1,6 @@
 services:
   equicloud:
-    build: .
+    image: ghcr.io/equicord/equicloud:latest
     ports:
       - "9000:9000"
     env_file:
@@ -14,7 +14,6 @@ services:
 
   scylla:
     image: scylladb/scylla:2025.3.1
-    container_name: scylla-node
     restart: unless-stopped
     volumes:
       - scylla_data:/var/lib/scylla
