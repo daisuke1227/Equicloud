@@ -37,18 +37,35 @@ async fn main() {
     };
 
     info!("Running migrations...");
-    let migration_runner = lib::MigrationRunner::new(session);
+    let migration_session = match lib::create_database_connection().await {
+        Ok(session) => session,
+        Err(e) => {
+            error!("Failed to create migration connection: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let migration_runner = lib::MigrationRunner::new(migration_session);
     if let Err(e) = migration_runner.run_migrations().await {
         error!("Failed to run migrations: {}", e);
         std::process::exit(1);
     }
     info!("Migrations completed");
 
+    let db_service = match lib::DatabaseService::new(session).await {
+        Ok(service) => service,
+        Err(e) => {
+            error!("Failed to create database service: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     let server_host = env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
     let bind_address = format!("{}:{}", server_host, server_port);
 
-    let app = routes::register_routes().layer(CorsLayer::permissive());
+    let app = routes::register_routes()
+        .layer(axum::extract::Extension(db_service))
+        .layer(CorsLayer::permissive());
 
     let listener = TcpListener::bind(&bind_address)
         .await

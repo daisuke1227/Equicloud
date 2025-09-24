@@ -1,11 +1,11 @@
-use anyhow::Result;
-use axum::{extract::Query, response::Json};
+use axum::{extract::Query, response::Json, Extension};
 use reqwest;
-use scylla::client::session_builder::SessionBuilder;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::env;
 use tracing::{error, info};
+
+use crate::lib::DatabaseService;
 
 #[derive(Deserialize)]
 pub struct OAuthCallback {
@@ -23,7 +23,10 @@ struct DiscordUserResult {
     id: String,
 }
 
-pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> {
+pub async fn oauth_callback(
+    Extension(_db): Extension<DatabaseService>,
+    Query(params): Query<OAuthCallback>,
+) -> Json<Value> {
     if let Some(error) = params.error {
         return Json(json!({
             "error": error
@@ -133,15 +136,7 @@ pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> 
         }
     }
 
-    let secret = match get_or_create_user_secret(&user_id).await {
-        Ok(secret) => secret,
-        Err(err) => {
-            error!("Failed to get/create user secret: {}", err);
-            return Json(json!({
-                "error": "Failed to generate secret"
-            }));
-        }
-    };
+    let secret = get_user_secret(&user_id);
 
     info!("User {} authenticated successfully", user_id);
 
@@ -150,22 +145,7 @@ pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> 
     }))
 }
 
-async fn get_or_create_user_secret(user_id: &str) -> Result<String> {
-    let scylla_uri = env::var("SCYLLA_URI").unwrap_or_default();
-    let username = env::var("SCYLLA_USERNAME").ok();
-    let password = env::var("SCYLLA_PASSWORD").ok();
-
-    let mut session_builder = SessionBuilder::new().known_node(&scylla_uri);
-
-    if let (Some(user), Some(pass)) = (username, password) {
-        session_builder = session_builder.user(&user, &pass);
-    }
-
-    let session = session_builder.build().await?;
-    session.use_keyspace("equicloud", false).await?;
-
+fn get_user_secret(user_id: &str) -> String {
     let user_hash = crc32fast::hash(user_id.as_bytes());
-    let secret = format!("{:08x}", user_hash);
-
-    Ok(secret)
+    format!("{:08x}", user_hash)
 }

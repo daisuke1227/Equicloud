@@ -1,28 +1,44 @@
-use anyhow::Result;
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
+    Extension,
 };
-use chrono::Utc;
-use scylla::client::session_builder::SessionBuilder;
 use serde_json::json;
 use std::env;
+use tracing::error;
 
-pub async fn head_settings(_headers: HeaderMap, user_id: String) -> impl IntoResponse {
-    match get_settings_metadata(&user_id).await {
+use crate::lib::DatabaseService;
+
+pub async fn head_settings(
+    Extension(db): Extension<DatabaseService>,
+    _headers: HeaderMap,
+    user_id: String,
+) -> impl IntoResponse {
+    match db.get_settings_metadata(&user_id).await {
         Ok(Some(written)) => {
             let mut response_headers = HeaderMap::new();
-            response_headers.insert("ETag", written.parse().unwrap());
+            if let Ok(etag_value) = written.parse() {
+                response_headers.insert("ETag", etag_value);
+            } else {
+                error!("Failed to parse ETag value: {}", written);
+            }
             (StatusCode::NO_CONTENT, response_headers)
         }
         Ok(None) => (StatusCode::NOT_FOUND, HeaderMap::new()),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new()),
+        Err(e) => {
+            error!("Database error in head_settings: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new())
+        }
     }
 }
 
-pub async fn get_settings(headers: HeaderMap, user_id: String) -> impl IntoResponse {
-    match get_user_settings(&user_id).await {
+pub async fn get_settings(
+    Extension(db): Extension<DatabaseService>,
+    headers: HeaderMap,
+    user_id: String,
+) -> impl IntoResponse {
+    match db.get_user_settings(&user_id).await {
         Ok(Some((value, written))) => {
             if let Some(if_none_match) = headers.get("if-none-match") {
                 if if_none_match.to_str().unwrap_or("") == written {
@@ -32,22 +48,36 @@ pub async fn get_settings(headers: HeaderMap, user_id: String) -> impl IntoRespo
             }
 
             let mut response_headers = HeaderMap::new();
-            response_headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
-            response_headers.insert("ETag", written.parse().unwrap());
+            if let Ok(content_type) = "application/octet-stream".parse() {
+                response_headers.insert("Content-Type", content_type);
+            }
+            if let Ok(etag_value) = written.parse() {
+                response_headers.insert("ETag", etag_value);
+            } else {
+                error!("Failed to parse ETag value: {}", written);
+            }
 
             (StatusCode::OK, response_headers, Body::from(value)).into_response()
         }
         Ok(None) => (StatusCode::NOT_FOUND, HeaderMap::new(), Body::empty()).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            HeaderMap::new(),
-            Body::empty(),
-        )
-            .into_response(),
+        Err(e) => {
+            error!("Database error in get_settings: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                HeaderMap::new(),
+                Body::empty(),
+            )
+                .into_response()
+        }
     }
 }
 
-pub async fn put_settings(headers: HeaderMap, user_id: String, body: Vec<u8>) -> impl IntoResponse {
+pub async fn put_settings(
+    Extension(db): Extension<DatabaseService>,
+    headers: HeaderMap,
+    user_id: String,
+    body: Vec<u8>,
+) -> impl IntoResponse {
     if headers.get("content-type").and_then(|h| h.to_str().ok()) != Some("application/octet-stream")
     {
         return (
@@ -74,7 +104,7 @@ pub async fn put_settings(headers: HeaderMap, user_id: String, body: Vec<u8>) ->
             .into_response();
     }
 
-    match save_user_settings(&user_id, body).await {
+    match db.save_user_settings(&user_id, body).await {
         Ok(written) => (
             StatusCode::OK,
             axum::Json(json!({
@@ -82,127 +112,29 @@ pub async fn put_settings(headers: HeaderMap, user_id: String, body: Vec<u8>) ->
             })),
         )
             .into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({
-                "error": "Failed to save settings"
-            })),
-        )
-            .into_response(),
+        Err(e) => {
+            error!("Database error in put_settings: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({
+                    "error": "Failed to save settings"
+                })),
+            )
+                .into_response()
+        }
     }
 }
 
-pub async fn delete_settings(user_id: String) -> impl IntoResponse {
-    match delete_user_settings(&user_id).await {
+pub async fn delete_settings(
+    Extension(db): Extension<DatabaseService>,
+    user_id: String,
+) -> impl IntoResponse {
+    match db.delete_user_settings(&user_id).await {
         Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Err(e) => {
+            error!("Database error in delete_settings: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 
-async fn get_settings_metadata(user_id: &str) -> Result<Option<String>> {
-    let scylla_uri = env::var("SCYLLA_URI").unwrap_or_default();
-    let username = env::var("SCYLLA_USERNAME").ok();
-    let password = env::var("SCYLLA_PASSWORD").ok();
-
-    let mut session_builder = SessionBuilder::new().known_node(&scylla_uri);
-
-    if let (Some(user), Some(pass)) = (username, password) {
-        session_builder = session_builder.user(&user, &pass);
-    }
-
-    let session = session_builder.build().await?;
-    session.use_keyspace("equicloud", false).await?;
-
-    let user_hash = crc32fast::hash(user_id.as_bytes());
-    let hash_key = format!("settings:{}", user_hash);
-
-    let query = "SELECT updated_at FROM users WHERE id = ?";
-    let result = session.query_unpaged(query, (&hash_key,)).await?;
-
-    let rows_result = result.into_rows_result()?;
-    for row in rows_result.rows::<(i64,)>()? {
-        let (updated_at,) = row?;
-        return Ok(Some(updated_at.to_string()));
-    }
-
-    Ok(None)
-}
-
-async fn get_user_settings(user_id: &str) -> Result<Option<(Vec<u8>, String)>> {
-    let scylla_uri = env::var("SCYLLA_URI").unwrap_or_default();
-    let username = env::var("SCYLLA_USERNAME").ok();
-    let password = env::var("SCYLLA_PASSWORD").ok();
-
-    let mut session_builder = SessionBuilder::new().known_node(&scylla_uri);
-
-    if let (Some(user), Some(pass)) = (username, password) {
-        session_builder = session_builder.user(&user, &pass);
-    }
-
-    let session = session_builder.build().await?;
-    session.use_keyspace("equicloud", false).await?;
-
-    let user_hash = crc32fast::hash(user_id.as_bytes());
-    let hash_key = format!("settings:{}", user_hash);
-
-    let query = "SELECT settings, updated_at FROM users WHERE id = ?";
-    let result = session.query_unpaged(query, (&hash_key,)).await?;
-
-    let rows_result = result.into_rows_result()?;
-    for row in rows_result.rows::<(Vec<u8>, i64)>()? {
-        let (settings, updated_at) = row?;
-        return Ok(Some((settings, updated_at.to_string())));
-    }
-
-    Ok(None)
-}
-
-async fn save_user_settings(user_id: &str, settings: Vec<u8>) -> Result<i64> {
-    let scylla_uri = env::var("SCYLLA_URI").unwrap_or_default();
-    let username = env::var("SCYLLA_USERNAME").ok();
-    let password = env::var("SCYLLA_PASSWORD").ok();
-
-    let mut session_builder = SessionBuilder::new().known_node(&scylla_uri);
-
-    if let (Some(user), Some(pass)) = (username, password) {
-        session_builder = session_builder.user(&user, &pass);
-    }
-
-    let session = session_builder.build().await?;
-    session.use_keyspace("equicloud", false).await?;
-
-    let user_hash = crc32fast::hash(user_id.as_bytes());
-    let hash_key = format!("settings:{}", user_hash);
-
-    let now = Utc::now().timestamp_millis();
-
-    let query = "INSERT INTO users (id, settings, created_at, updated_at) VALUES (?, ?, ?, ?)";
-    session
-        .query_unpaged(query, (&hash_key, &settings, now, now))
-        .await?;
-
-    Ok(now)
-}
-
-async fn delete_user_settings(user_id: &str) -> Result<()> {
-    let scylla_uri = env::var("SCYLLA_URI").unwrap_or_default();
-    let username = env::var("SCYLLA_USERNAME").ok();
-    let password = env::var("SCYLLA_PASSWORD").ok();
-
-    let mut session_builder = SessionBuilder::new().known_node(&scylla_uri);
-
-    if let (Some(user), Some(pass)) = (username, password) {
-        session_builder = session_builder.user(&user, &pass);
-    }
-
-    let session = session_builder.build().await?;
-    session.use_keyspace("equicloud", false).await?;
-
-    let user_hash = crc32fast::hash(user_id.as_bytes());
-    let hash_key = format!("settings:{}", user_hash);
-
-    let query = "DELETE FROM users WHERE id = ?";
-    session.query_unpaged(query, (&hash_key,)).await?;
-
-    Ok(())
-}
