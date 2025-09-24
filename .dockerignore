@@ -11,4 +11,3 @@ compose.yml
 Dockerfile
 .dockerignore
 rustfmt.toml
-Cargo.lock
