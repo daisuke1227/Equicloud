@@ -48,12 +48,11 @@ async fn get_metrics(Extension(db): Extension<DatabaseService>) -> impl IntoResp
     };
 
     Json(json!({
-        "uptime_seconds": uptime,
-        "users_total": user_counts.total,
         "users_day": user_counts.day,
         "users_week": user_counts.week,
         "users_month": user_counts.month,
-        "database_connected": true,
+        "users_total": user_counts.total,
+        "uptime_seconds": uptime,
         "timestamp": chrono::Utc::now().timestamp()
     }))
     .into_response()
