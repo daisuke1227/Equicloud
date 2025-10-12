@@ -30,8 +30,9 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the binary from builder stage
+# Copy the binaries from builder stage
 COPY --from=builder /app/target/release/equicloud .
+COPY --from=builder /app/target/release/migrate_legacy_users .
 
 # Copy migrations
 COPY --from=builder /app/migrations ./migrations
